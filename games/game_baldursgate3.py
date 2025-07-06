@@ -15,7 +15,7 @@ from xml.etree import ElementTree
 from xml.etree.ElementTree import Element
 
 import mobase
-from PyQt6.QtCore import qWarning, qInfo
+from PyQt6.QtCore import qWarning, qInfo, qDebug
 from mobase import IModInterface
 
 from ..basic_features import (
@@ -141,58 +141,67 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
     def on_about_to_run(self, _: str=None) -> bool:
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             metadata = {mod: [executor.submit(self._get_metadata, mod, file)
-                              for file in list(pathlib.Path(mod.absolutePath()).glob("**/*.pak"))] for mod in self.active_mods()}
+                              for file in list(pathlib.Path(mod.absolutePath()).glob("**/*.pak")) + [f for f in pathlib.Path(mod.absolutePath()).glob("*") if f.is_dir()] ] for mod in self.active_mods()}
+
         with open(pathlib.Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx", 'w') as f:
             f.write(self.mod_settings_xml_start + ''.join(future.result(2) for mod in self.active_mods() for future in metadata[mod])
                     + self.mod_settings_xml_end)
         if DEBUG:
             shutil.copy(pathlib.Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx", pathlib.Path(self._organizer.basePath()) / 'temp/')
         return True
+
     def _get_metadata(self, mod: mobase.IModInterface, file: pathlib.Path,
                       force_recreate: bool = DEBUG, rm_extracted: bool = not DEBUG) -> str:
-        def get_module_short_desc(section: SectionProxy) -> str:
-            return '' if 'override' in section.keys() or 'Folder' not in section.keys() else f'''
+        def get_module_short_desc() -> str:
+            return '' if not config.has_section(file.name) or 'override' in config[file.name].keys() or 'Name' not in config[file.name].keys() else f'''
                         <node id="ModuleShortDesc">
-                            <attribute id="Folder" type="LSString" value="{section['Folder']}"/>
-                            <attribute id="MD5" type="LSString" value="{section['MD5']}"/>
-                            <attribute id="Name" type="LSString" value="{section['Name']}"/>
-                            <attribute id="PublishHandle" type="uint64" value="{section['PublishHandle']}"/>
-                            <attribute id="UUID" type="guid" value="{section['UUID']}"/>
-                            <attribute id="Version64" type="int64" value="{section['Version64']}"/>
+                            <attribute id="Folder" type="LSString" value="{config[file.name]['Folder']}"/>
+                            <attribute id="MD5" type="LSString" value="{config[file.name]['MD5']}"/>
+                            <attribute id="Name" type="LSString" value="{config[file.name]['Name']}"/>
+                            <attribute id="PublishHandle" type="uint64" value="{config[file.name]['PublishHandle']}"/>
+                            <attribute id="UUID" type="guid" value="{config[file.name]['UUID']}"/>
+                            <attribute id="Version64" type="int64" value="{config[file.name]['Version64']}"/>
                         </node>'''
 
         def get_attr_value(root: Element, attr_id: str) -> str:
             attr = root.find(f".//attribute[@id='{attr_id}']")
             return self.types.get(attr_id) if attr is None else attr.get('value', self.types.get(attr_id))
 
-        def extract_data(output_dir: pathlib.Path, section: SectionProxy) -> None:
-            file_str = str(file)
-            result = subprocess.run(
-                    [self.divine_file, "-a", "extract-package", "-g", "bg3",  "-x", "*/meta.lsx",
-                     "-s", file_str, "-d", str(output_dir),],
-                    creationflags=subprocess.CREATE_NO_WINDOW, check=not DEBUG, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        def extract_data(output_dir: pathlib.Path, ) -> bool:
+            args = [self.divine_file, "-a", "extract-single-file", "-g", "bg3", "-f", "meta.lsx",
+                    "-s", str(file), "-d", str(output_dir), "-l", "debug" if DEBUG else "info"]
+            result = subprocess.run(args, creationflags=subprocess.CREATE_NO_WINDOW, check=not DEBUG,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if result.returncode != 0:
-                qWarning(str(result.stdout))
-                qWarning(' '.join([self.divine_file, "-a", "extract-package", "-g", "bg3",  "-x", "*/meta.lsx",
-                     "-s", f'"{file_str}"', "-d", f'"{str(output_dir)}"',]))
-                return
-            meta_files = list(output_dir.glob("**/meta.lsx"))
-            if not meta_files:
-                qInfo(f"No meta.lsx files found in extracted PAK: {file.name}")
-                return
-            root = ElementTree.parse(str(meta_files[0])).getroot().find(f".//node[@id='ModuleInfo']")
+                qWarning(f"{' '.join(args)} returned {result.stdout}, code {result.returncode}")
+                return False
+            if not output_dir.exists():
+                qInfo(f"No meta.lsx files found in {file.name}, {file.name} determined to be an override mod")
+                return False
+            return True
+
+        def parse_meta_lsx(meta_file: pathlib.Path, section: SectionProxy):
+            root = ElementTree.parse(meta_file).getroot().find(f".//node[@id='ModuleInfo']")
             if root is None:
                 qInfo(f"No ModuleInfo node found in meta.lsx for {mod.name()} ")
                 return
             folder_name = get_attr_value(root, 'Folder')
-            if file_str not in self.mod_cache:
+            if file.is_file() and file not in self.mod_cache:
+                # a mod which has a meta.lsx and is not an override mod meets at least one of three conditions:
+                # 1. it has files in Public/Engine/Timeline/MaterialGroups, or
+                # 2. it has files in Mods/<folder_name>/ other than the meta.lsx file, or
+                # 3. it has files in Public/<folder_name>
                 result = subprocess.run(
-                    [self.divine_file, "-a", "list-package", "-g", "bg3", "-s", file_str, ],
+                    [self.divine_file, "-a", "list-package", "-g", "bg3", "-s", str(file), "--use-regex",
+                     "-x", rf"(/{folder_name}/(?!meta\.lsx))|(Public/Engine/Timeline/MaterialGroups)", ],
                     creationflags=subprocess.CREATE_NO_WINDOW, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-                self.mod_cache[file_str] = result.returncode == 0 and re.search(
-                    rf"(/{folder_name}/(?!meta\.lsx))|(Public/Engine/Timeline/MaterialGroups)", result.stdout, re.MULTILINE)
-            if not self.mod_cache[file_str]:
+                self.mod_cache[file] = result.returncode == 0 and result.stdout.strip()
+            else:
+                self.mod_cache[file] = len(list(file.glob(f"*/{folder_name}/**"))) > 1 or len(list(file.glob(f"Public/Engine/Timeline/MaterialGroups/*"))) > 0
+            if not self.mod_cache[file]:
+                qInfo(f"pak {file.name} determined to be an override mod")
                 section['override'] = 'True'
+                section['Folder'] = folder_name
             else:
                 for key in self.types:
                     section[key] = get_attr_value(root, key)
