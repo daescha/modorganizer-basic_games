@@ -4,7 +4,7 @@ import difflib
 import hashlib
 import multiprocessing
 import os
-import pathlib
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -64,7 +64,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
     GameGogId = 1456460669
 
     mod_cache = {}
-    divine_file = str(pathlib.Path(__file__).resolve().parent / 'baldursgate3/Divine.exe')
+    divine_file = str(Path(__file__).resolve().parent / 'baldursgate3/Divine.exe')
     max_workers = min(multiprocessing.cpu_count(), 16)
     types = {"Folder": '', "MD5": '', "Name":'', "PublishHandle":'0', "UUID":'', "Version64":'0'}
     mod_settings_xml_start = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -117,7 +117,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
     def mappings(self) -> typing.List[mobase.Mapping]:
         mappings = []
         def map_files(path,  dest_func, pattern='**',):
-            for file in list(pathlib.Path(path).glob(pattern)):
+            for file in list(Path(path).glob(pattern)):
                 mappings.append(mobase.Mapping(
                     source=str(file),
                     destination=self.documentsDirectory().absoluteFilePath(dest_func(file)),
@@ -135,7 +135,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
                 filter(lambda mod: self._organizer.modList().state(mod) & mobase.ModState.ACTIVE, self._organizer.modList().allModsByProfilePriority())]
 
     def on_mod_installed(self, mod: mobase.IModInterface) -> None:
-        for file in list((pathlib.Path(mod.absolutePath())).glob("**/*.pak")):
+        for file in list(Path(mod.absolutePath()).glob("**/*.pak")):
             self._get_metadata(mod, file, True)
 
     def on_about_to_run(self, _: str=None) -> bool:
@@ -147,10 +147,10 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
             f.write(self.mod_settings_xml_start + ''.join(future.result(2) for mod in self.active_mods() for future in metadata[mod])
                     + self.mod_settings_xml_end)
         if DEBUG:
-            shutil.copy(pathlib.Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx", pathlib.Path(self._organizer.basePath()) / 'temp/')
+            shutil.copy(Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx", Path(self._organizer.basePath()) / 'temp/')
         return True
 
-    def _get_metadata(self, mod: mobase.IModInterface, file: pathlib.Path,
+    def _get_metadata(self, mod: mobase.IModInterface, file: Path,
                       force_recreate: bool = DEBUG, rm_extracted: bool = not DEBUG) -> str:
         def get_module_short_desc() -> str:
             return '' if not config.has_section(file.name) or 'override' in config[file.name].keys() or 'Name' not in config[file.name].keys() else f'''
@@ -167,7 +167,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
             attr = root.find(f".//attribute[@id='{attr_id}']")
             return self.types.get(attr_id) if attr is None else attr.get('value', self.types.get(attr_id))
 
-        def extract_data(output_dir: pathlib.Path, ) -> bool:
+        def extract_data(output_dir: Path, ) -> bool:
             args = [self.divine_file, "-a", "extract-single-file", "-g", "bg3", "-f", "meta.lsx",
                     "-s", str(file), "-d", str(output_dir), "-l", "debug" if DEBUG else "info"]
             result = subprocess.run(args, creationflags=subprocess.CREATE_NO_WINDOW, check=not DEBUG,
@@ -180,7 +180,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
                 return False
             return True
 
-        def parse_meta_lsx(meta_file: pathlib.Path, section: SectionProxy):
+        def parse_meta_lsx(meta_file: Path, section: SectionProxy):
             root = ElementTree.parse(meta_file).getroot().find(f".//node[@id='ModuleInfo']")
             if root is None:
                 qInfo(f"No ModuleInfo node found in meta.lsx for {mod.name()} ")
@@ -211,7 +211,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
         if file.is_dir() and re.search("(Script Extender)|(Root)|(Generated)|(Public)", file.name):
             return ''
         if file.name.endswith("pak"):
-            meta_file = (pathlib.Path(self._organizer.basePath()) /
+            meta_file = (Path(self._organizer.basePath()) /
                           f'temp/extracted_metadata/{str(file.name)[:int(len(str(file.name)) / 2)]}-{hashlib.md5(str(file).encode(), usedforsecurity=False).hexdigest()[:5]}.lsx')
             try:
                 if not force_recreate and config.has_section(file.name) and ('override' in config[file.name].keys() or 'Folder' in config[file.name].keys()):
@@ -223,7 +223,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
                     parse_meta_lsx(meta_file, config[file.name])
                 else:
                     config[file.name]['override'] = 'True'
-                with open(pathlib.Path(mod.absolutePath()) / "meta.ini", "w", encoding='utf-8') as f:
+                with open(Path(mod.absolutePath()) / "meta.ini", "w", encoding='utf-8') as f:
                     config.write(f)
             except Exception:
                 qWarning(traceback.format_exc())
@@ -233,7 +233,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
         elif next(file.glob("Public/*"), False) or next(file.glob("Mods/*"), False) or next(file.glob("Generated/*"), False) or next(file.glob("Localization/*"), False) or next(file.glob("ScriptExtender/*"), False):
             qDebug(f"packable dir: {file}")
             try:
-                pak_path = pathlib.Path(self._organizer.overwritePath()) / f"Mods/{file.name}.pak"
+                pak_path = Path(self._organizer.overwritePath()) / f"Mods/{file.name}.pak"
                 pak_path.unlink(missing_ok=True)
                 args = [self.divine_file, "-a", "create-package", "-g", "bg3",
                         "-s", str(file), "-d", str(pak_path), "-l", "debug" if DEBUG else "info"]
@@ -248,7 +248,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
                     parse_meta_lsx(meta_file[0], config[file.name])
                 else:
                     config[file.name]['override'] = 'True'
-                with open(pathlib.Path(mod.absolutePath()) / "meta.ini", "w", encoding='utf-8') as f:
+                with open(Path(mod.absolutePath()) / "meta.ini", "w", encoding='utf-8') as f:
                     config.write(f)
             except Exception:
                 qWarning(traceback.format_exc())
