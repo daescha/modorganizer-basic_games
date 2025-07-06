@@ -186,16 +186,17 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
                 qInfo(f"No ModuleInfo node found in meta.lsx for {mod.name()} ")
                 return
             folder_name = get_attr_value(root, 'Folder')
-            if file.is_file() and file not in self.mod_cache:
-                # a mod which has a meta.lsx and is not an override mod meets at least one of three conditions:
-                # 1. it has files in Public/Engine/Timeline/MaterialGroups, or
-                # 2. it has files in Mods/<folder_name>/ other than the meta.lsx file, or
-                # 3. it has files in Public/<folder_name>
-                result = subprocess.run(
-                    [self.divine_file, "-a", "list-package", "-g", "bg3", "-s", str(file), "--use-regex",
-                     "-x", rf"(/{folder_name}/(?!meta\.lsx))|(Public/Engine/Timeline/MaterialGroups)", ],
-                    creationflags=subprocess.CREATE_NO_WINDOW, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-                self.mod_cache[file] = result.returncode == 0 and result.stdout.strip()
+            if file.is_file():
+                if file not in self.mod_cache:
+                    # a mod which has a meta.lsx and is not an override mod meets at least one of three conditions:
+                    # 1. it has files in Public/Engine/Timeline/MaterialGroups, or
+                    # 2. it has files in Mods/<folder_name>/ other than the meta.lsx file, or
+                    # 3. it has files in Public/<folder_name>
+                    result = subprocess.run(
+                        [self.divine_file, "-a", "list-package", "-g", "bg3", "-s", str(file), "--use-regex",
+                         "-x", rf"(/{folder_name}/(?!meta\.lsx))|(Public/Engine/Timeline/MaterialGroups)", ],
+                        creationflags=subprocess.CREATE_NO_WINDOW, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+                    self.mod_cache[file] = result.returncode == 0 and result.stdout.strip()
             else:
                 self.mod_cache[file] = len(list(file.glob(f"*/{folder_name}/**"))) > 1 or len(list(file.glob(f"Public/Engine/Timeline/MaterialGroups/*"))) > 0
             if not self.mod_cache[file]:
