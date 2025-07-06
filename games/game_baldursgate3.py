@@ -138,13 +138,15 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
         for file in list(Path(mod.absolutePath()).glob("**/*.pak")):
             self._get_metadata(mod, file, True)
 
+    def get_metadata(self, mod):
+        return ''.join([self._get_metadata(mod, file) for file in sorted(list(Path(mod.absolutePath()).glob("**/*.pak")) + [f for f in Path(mod.absolutePath()).glob("*") if f.is_dir()])])
+
     def on_about_to_run(self, _: str=None) -> bool:
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            metadata = {mod: [executor.submit(self._get_metadata, mod, file)
-                              for file in list(pathlib.Path(mod.absolutePath()).glob("**/*.pak")) + [f for f in pathlib.Path(mod.absolutePath()).glob("*") if f.is_dir()] ] for mod in self.active_mods()}
+            metadata = {mod: executor.submit(self.get_metadata, mod) for mod in self.active_mods()}
 
-        with open(pathlib.Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx", 'w') as f:
-            f.write(self.mod_settings_xml_start + ''.join(future.result(2) for mod in self.active_mods() for future in metadata[mod])
+        with open(Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx", 'w') as f:
+            f.write(self.mod_settings_xml_start + ''.join(metadata[mod].result(2) for mod in self.active_mods())
                     + self.mod_settings_xml_end)
         if DEBUG:
             shutil.copy(Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx", Path(self._organizer.basePath()) / 'temp/')
