@@ -102,14 +102,8 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
 
         self._organizer.onAboutToRun(self.on_about_to_run) # on Executable Start
         # self._organizer.onFinishedRun()  # on Executable Stop
+        self._organizer.onFinishedRun(self.on_finished_run)
         if DEBUG:
-            self._organizer.onFinishedRun(lambda x, y: qInfo(str(*difflib.unified_diff(
-                open(pathlib.Path(self._organizer.basePath()) / 'temp/modsettings.lsx').readlines(),
-            open(pathlib.Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx").readlines(),
-            fromfile=str(pathlib.Path(self._organizer.basePath()) / 'temp/modsettings.lsx'),
-            tofile=str(pathlib.Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx"),
-            lineterm='' # Important for consistent newline handling
-        ))))  # on Executable Stop
             self._organizer.onUserInterfaceInitialized(lambda _: None if self.on_about_to_run() else None) # on Mod Organizer 2 Load
         self._organizer.modList().onModInstalled(self.on_mod_installed)  # on Mod Installed
         return True
@@ -129,6 +123,20 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
             map_files(mod.absolutePath() + "/Script Extender", lambda file: os.path.relpath(file, mod.absolutePath()))
         map_files(self._organizer.overwritePath(),  lambda file: os.path.relpath(file, self._organizer.overwritePath()))
         return mappings
+
+    def on_finished_run(self, x, y):
+        if DEBUG:
+            for x in difflib.unified_diff(
+                open(Path(self._organizer.basePath()) / 'temp/modsettings.lsx').readlines(),
+                open(Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx").readlines(),
+                fromfile=str(Path(self._organizer.basePath()) / 'temp/modsettings.lsx'),
+                tofile=str(Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx"),
+                lineterm=''):
+                qDebug(x)
+        log_dir = Path(self._organizer.basePath()) / "logs/"
+        for path in Path(self.dataDirectory().absolutePath()).parent.rglob("*.log"):
+            (log_dir / path.name).unlink(missing_ok=True)
+            shutil.move(path, log_dir)
 
     def active_mods(self) -> list[IModInterface]:
         return [self._organizer.modList().getMod(mod_name) for mod_name in
