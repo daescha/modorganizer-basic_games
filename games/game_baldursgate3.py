@@ -171,7 +171,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
             args = [self.divine_file, "-a", "extract-single-file", "-g", "bg3", "-f", "meta.lsx",
                     "-s", str(file), "-d", str(output_dir), "-l", "debug" if DEBUG else "info"]
             result = subprocess.run(args, creationflags=subprocess.CREATE_NO_WINDOW, check=not DEBUG,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             if result.returncode != 0:
                 qWarning(f"{' '.join(args)} returned {result.stdout}, code {result.returncode}")
                 return False
@@ -207,9 +207,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
                     section[key] = get_attr_value(root, key)
 
         config = configparser.ConfigParser()
-        config.read(pathlib.Path(mod.absolutePath()) / "meta.ini", encoding='utf-8')
-        if file.is_dir() and re.search("(Script Extender)|(Root)|(Generated)|(Public)", file.name):
-            return ''
+        config.read(Path(mod.absolutePath()) / "meta.ini", encoding='utf-8')
         if file.name.endswith("pak"):
             meta_file = (Path(self._organizer.basePath()) /
                           f'temp/extracted_metadata/{str(file.name)[:int(len(str(file.name)) / 2)]}-{hashlib.md5(str(file).encode(), usedforsecurity=False).hexdigest()[:5]}.lsx')
@@ -230,6 +228,9 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
             finally:
                 if rm_extracted:
                     meta_file.unlink(missing_ok=True)
+        elif file.is_dir() and re.search("(Script Extender)|(Root)|(Generated)|(Public)", file.name):
+            qDebug(f"directory is not packable: {file}")
+            return ''
         elif next(file.glob("Public/*"), False) or next(file.glob("Mods/*"), False) or next(file.glob("Generated/*"), False) or next(file.glob("Localization/*"), False) or next(file.glob("ScriptExtender/*"), False):
             qDebug(f"packable dir: {file}")
             try:
@@ -238,7 +239,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
                 args = [self.divine_file, "-a", "create-package", "-g", "bg3",
                         "-s", str(file), "-d", str(pak_path), "-l", "debug" if DEBUG else "info"]
                 result = subprocess.run(args, creationflags=subprocess.CREATE_NO_WINDOW, check=not DEBUG,
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 if result.returncode != 0:
                     qWarning(f"{' '.join(args)} returned {result.stdout}, code {result.returncode}")
                     return ''
