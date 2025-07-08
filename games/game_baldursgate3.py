@@ -33,6 +33,7 @@ class BG3ModDataChecker(BasicModDataChecker):
             valid=[
                 "*.pak", # standard mods
                 "Public", "Generated", # override mods with loose files
+                "*/Public", "*/Localization", "*/Generated", "*/ScriptExtender", "*/Mods", # unpacked mods that will be packed right before game is run
                 "Root", # native mods using root builder
                 'Script Extender', # mods which are configured via jsons in this folder
                 'info.json', '*.txt' # additional files commonly included with bg3 mods which will not be used but do not need to be deleted
@@ -51,9 +52,9 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
     GameName = "Baldur's Gate 3"
     GameShortName = "baldursgate3"
     GameNexusName = "baldursgate3"
-    GameValidShortNames = ["baldursgate3"]
+    GameValidShortNames = ["bg3"]
 
-    GameBinary = r"bin\bg3.exe"
+    GameBinary = "bin/bg3.exe"
     GameDataPath = "Data"
     GameDocumentsDirectory = "%USERPROFILE%/AppData/Local/Larian Studios/Baldur's Gate 3"
     GameSavesDirectory = "%GAME_DOCUMENTS%/PlayerProfiles/Public/Savegames/Story"
@@ -93,6 +94,7 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
     def __init__(self):
         BasicGame.__init__(self)
         mobase.IPluginFileMapper.__init__(self)
+        self.folder_pattern = re.compile("(Script Extender)|(Root)|(Generated)|(Public)")
 
     def init(self, organizer: mobase.IOrganizer) -> bool:
         super().init(organizer)
@@ -100,18 +102,21 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
         self._register_feature(BasicGameSaveGameInfo(lambda s: s.with_suffix(".webp")))
         self._register_feature(BasicLocalSavegames(self.savesDirectory()))
 
-        self._organizer.onAboutToRun(self.on_about_to_run) # on Executable Start
-        # self._organizer.onFinishedRun()  # on Executable Stop
+        self._organizer.onAboutToRun(self.construct_modsettings_xml)
         self._organizer.onFinishedRun(self.on_finished_run)
         if DEBUG:
-            self._organizer.onUserInterfaceInitialized(lambda _: None if self.on_about_to_run() else None) # on Mod Organizer 2 Load
-        self._organizer.modList().onModInstalled(self.on_mod_installed)  # on Mod Installed
+            self._organizer.onUserInterfaceInitialized(lambda _: None if self.construct_modsettings_xml() else None)
+        self._organizer.modList().onModInstalled(self.on_mod_installed)
+        self.log_dir = Path(organizer.basePath()) / "logs/"
+        self.modsettings_backup = Path(organizer.basePath()) / 'temp/modsettings.lsx'
+        self.modsettings_path = Path(organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx"
         return True
 
     def mappings(self) -> typing.List[mobase.Mapping]:
         mappings = []
         def map_files(path,  dest_func, pattern='**',):
             for file in list(Path(path).glob(pattern)):
+                qDebug(f"mapping {file} to {self.documentsDirectory().absoluteFilePath(dest_func(file))}")
                 mappings.append(mobase.Mapping(
                     source=str(file),
                     destination=self.documentsDirectory().absoluteFilePath(dest_func(file)),
@@ -126,17 +131,13 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
 
     def on_finished_run(self, x, y):
         if DEBUG:
-            for x in difflib.unified_diff(
-                open(Path(self._organizer.basePath()) / 'temp/modsettings.lsx').readlines(),
-                open(Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx").readlines(),
-                fromfile=str(Path(self._organizer.basePath()) / 'temp/modsettings.lsx'),
-                tofile=str(Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx"),
-                lineterm=''):
+            for x in difflib.unified_diff(open(self.modsettings_backup).readlines(), open(self.modsettings_path).readlines(),
+                                          fromfile=str(self.modsettings_backup), tofile=str(self.modsettings_path), lineterm=''):
                 qDebug(x)
-        log_dir = Path(self._organizer.basePath()) / "logs/"
         for path in Path(self.dataDirectory().absolutePath()).parent.rglob("*.log"):
-            (log_dir / path.name).unlink(missing_ok=True)
-            shutil.move(path, log_dir)
+            (self.log_dir / path.name).unlink(missing_ok=True)
+            qDebug(f"moving {path} to {self.log_dir}")
+            shutil.move(path, self.log_dir)
 
     def active_mods(self) -> list[IModInterface]:
         return [self._organizer.modList().getMod(mod_name) for mod_name in
@@ -149,15 +150,14 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
     def get_metadata(self, mod):
         return ''.join([self._get_metadata(mod, file) for file in sorted(list(Path(mod.absolutePath()).glob("**/*.pak")) + [f for f in Path(mod.absolutePath()).glob("*") if f.is_dir()])])
 
-    def on_about_to_run(self, _: str=None) -> bool:
+    def construct_modsettings_xml(self, _: str=None) -> bool:
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             metadata = {mod: executor.submit(self.get_metadata, mod) for mod in self.active_mods()}
 
-        with open(Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx", 'w') as f:
-            f.write(self.mod_settings_xml_start + ''.join(metadata[mod].result(2) for mod in self.active_mods())
-                    + self.mod_settings_xml_end)
+        with open(self.modsettings_path, 'w') as f:
+            f.write(self.mod_settings_xml_start + ''.join(metadata[mod].result(2) for mod in self.active_mods()) + self.mod_settings_xml_end)
         if DEBUG:
-            shutil.copy(Path(self._organizer.overwritePath()) / "PlayerProfiles/Public/modsettings.lsx", Path(self._organizer.basePath()) / 'temp/')
+            shutil.copy(self.modsettings_path, self.modsettings_backup)
         return True
 
     def _get_metadata(self, mod: mobase.IModInterface, file: Path,
@@ -216,35 +216,36 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
             else:
                 for key in self.types:
                     section[key] = get_attr_value(root, key)
-
+        meta_ini = Path(mod.absolutePath()) / "meta.ini"
         config = configparser.ConfigParser()
-        config.read(Path(mod.absolutePath()) / "meta.ini", encoding='utf-8')
-        if file.name.endswith("pak"):
-            meta_file = (Path(self._organizer.basePath()) /
-                          f'temp/extracted_metadata/{str(file.name)[:int(len(str(file.name)) / 2)]}-{hashlib.md5(str(file).encode(), usedforsecurity=False).hexdigest()[:5]}.lsx')
-            try:
-                if not force_recreate and config.has_section(file.name) and ('override' in config[file.name].keys() or 'Folder' in config[file.name].keys()):
-                    return get_module_short_desc()
-                config[file.name] = {}
-                meta_file.parent.mkdir(parents=True, exist_ok=True)
-                meta_file.unlink(missing_ok=True)
-                if extract_data(meta_file):
-                    parse_meta_lsx(meta_file, config[file.name])
-                else:
-                    config[file.name]['override'] = 'True'
-                with open(Path(mod.absolutePath()) / "meta.ini", "w", encoding='utf-8') as f:
-                    config.write(f)
-            except Exception:
-                qWarning(traceback.format_exc())
-            finally:
-                if rm_extracted:
+        config.read(meta_ini, encoding='utf-8')
+        def metadata_to_ini(condition, to_parse):
+            config[file.name] = {}
+            if condition:
+                parse_meta_lsx(to_parse(), config[file.name])
+            else:
+                config[file.name]['override'] = 'True'
+            with open(meta_ini, "w", encoding='utf-8') as f:
+                config.write(f)
+            return get_module_short_desc()
+        try:
+            if file.name.endswith("pak"):
+                meta_file = (Path(self._organizer.basePath()) /
+                              f'temp/extracted_metadata/{str(file.name)[:int(len(str(file.name)) / 2)]}-{hashlib.md5(str(file).encode(), usedforsecurity=False).hexdigest()[:5]}.lsx')
+                try:
+                    if not force_recreate and config.has_section(file.name) and ('override' in config[file.name].keys() or 'Folder' in config[file.name].keys()):
+                        return get_module_short_desc()
+                    meta_file.parent.mkdir(parents=True, exist_ok=True)
                     meta_file.unlink(missing_ok=True)
-        elif file.is_dir() and re.search("(Script Extender)|(Root)|(Generated)|(Public)", file.name):
-            qDebug(f"directory is not packable: {file}")
-            return ''
-        elif next(file.glob("Public/*"), False) or next(file.glob("Mods/*"), False) or next(file.glob("Generated/*"), False) or next(file.glob("Localization/*"), False) or next(file.glob("ScriptExtender/*"), False):
-            qDebug(f"packable dir: {file}")
-            try:
+                    return metadata_to_ini(extract_data(meta_file), lambda: meta_file)
+                finally:
+                    if rm_extracted:
+                        meta_file.unlink(missing_ok=True)
+            elif file.is_dir() and self.folder_pattern.search(file.name):
+                # qDebug(f"directory is not packable: {file}")
+                return ''
+            elif next(file.glob("Public/*"), False) or next(file.glob("Mods/*"), False) or next(file.glob("Generated/*"), False) or next(file.glob("Localization/*"), False) or next(file.glob("ScriptExtender/*"), False):
+                qDebug(f"packable dir: {file}")
                 pak_path = Path(self._organizer.overwritePath()) / f"Mods/{file.name}.pak"
                 pak_path.unlink(missing_ok=True)
                 args = [self.divine_file, "-a", "create-package", "-g", "bg3",
@@ -252,19 +253,16 @@ class BG3Game(BasicGame, mobase.IPluginFileMapper):
                 result = subprocess.run(args, creationflags=subprocess.CREATE_NO_WINDOW, check=not DEBUG,
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 if result.returncode != 0:
-                    qWarning(f"{' '.join(args)} returned {result.stdout}, code {result.returncode}")
+                    qWarning(f"{' '.join([self.divine_file, "-a", "create-package", "-g", "bg3",
+                        "-s", f'"{file}"',
+                                          "-d", f'"{pak_path}"',
+                                          "-l", "trace" if DEBUG else "info"]).replace(str(Path.home()), '~', 1).replace(str(Path.home()), '$HOME')} returned {str(result.stdout)}, code {result.returncode}")
                     return ''
-                config[file.name] = {}
                 meta_file = list(file.glob("Mods/*/meta.lsx"))
-                if len(meta_file) > 0:
-                    parse_meta_lsx(meta_file[0], config[file.name])
-                else:
-                    config[file.name]['override'] = 'True'
-                with open(Path(mod.absolutePath()) / "meta.ini", "w", encoding='utf-8') as f:
-                    config.write(f)
-            except Exception:
-                qWarning(traceback.format_exc())
-        else:
-            qDebug(f"Nothing file {file}")
+                return metadata_to_ini(len(meta_file) > 0, lambda: meta_file[0])
+            else:
+                # qDebug(f"non packable dir, unlikely to be used by the game: {file}")
+                return ''
+        except Exception:
+            qWarning(traceback.format_exc())
             return ''
-        return get_module_short_desc()
