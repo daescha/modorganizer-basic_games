@@ -71,3 +71,26 @@ class ParseModTest(unittest.TestCase):
         build_pak(self.mod, [("Mods/Foo/meta.lsx", META, 3)])
         with self.assertRaises(pak_parser.NeedsDivine):
             self.parser.get_metadata_for_files_in_mod(self.mod, False)
+
+
+DEPS_META = META.replace(
+    b'<region id="Config">',
+    b'<region id="Config"><node id="Dependencies"><children>'
+    b'<node id="ModuleShortDesc"><attribute id="UUID" value="dep-1"/></node>'
+    b'<node id="ModuleShortDesc"><attribute id="Folder" value="GustavX"/>'
+    b'<attribute id="UUID" value="base"/></node></children></node>',
+)
+
+
+class DependenciesTest(unittest.TestCase):
+    def test_stores_mod_dependencies_without_base_modules(self):
+        tmp = Path(tempfile.mkdtemp())
+        utils = MagicMock(plugin_data_path=tmp / "d", autobuild_paks=False)
+        files = [("Mods/Foo/meta.lsx", DEPS_META, 1), ("Mods/Foo/x", b"x", 0)]
+        pak = build_pak(tmp, files)
+        _, config = pak_parser.BG3PakParser(utils).get_metadata_for_files_in_mod(
+            tmp, False
+        )
+        assert config is not None
+        self.assertEqual(config[pak.name]["dependencies"], "dep-1")
+        self.assertEqual(config[pak.name]["UUID"], "u-1")

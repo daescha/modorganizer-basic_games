@@ -215,11 +215,8 @@ class BG3PakParser:
             config[file.name]["signature"] = _signature(file)
             self._mod_cache.pop(file, None)
         if condition:
-            root = (
-                ElementTree.parse(to_parse())
-                .getroot()
-                .find(".//node[@id='ModuleInfo']")
-            )
+            tree = ElementTree.parse(to_parse()).getroot()
+            root = tree.find(".//node[@id='ModuleInfo']")
             if root is None:
                 qInfo(f"No ModuleInfo node found in meta.lsx for {file.name}")
             else:
@@ -256,6 +253,8 @@ class BG3PakParser:
                 if self._mod_cache[file]:
                     for key in self._types:
                         section[key] = self.get_attr_value(root, key)
+                    if deps := _dependencies(tree):
+                        section["dependencies"] = ",".join(deps)
                 else:
                     qInfo(f"pak {file.name} determined to be an override mod")
                     section["override"] = "True"
@@ -263,6 +262,33 @@ class BG3PakParser:
         else:
             config[file.name]["override"] = "True"
         return get_module_short_desc(config, file)
+
+
+_base_modules = {
+    "GustavX",
+    "GustavDev",
+    "Gustav",
+    "Shared",
+    "SharedDev",
+    "MainUI",
+    "ModBrowser",
+    "Honour",
+    "HonourX",
+}
+
+
+def _dependencies(tree: Element) -> list[str]:
+    deps: list[str] = []
+    for node in tree.findall(
+        ".//node[@id='Dependencies']/children/node[@id='ModuleShortDesc']"
+    ):
+        attrs = {a.get("id"): a.get("value", "") for a in node.iter("attribute")}
+        if attrs.get("UUID") and not _base_modules & {
+            attrs.get("Folder"),
+            attrs.get("Name"),
+        }:
+            deps.append(attrs["UUID"])
+    return deps
 
 
 def _signature(file: Path) -> str:
