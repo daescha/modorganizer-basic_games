@@ -198,41 +198,16 @@ class BG3Utils:
         args: str = "",
         force_reparse_metadata: bool = False,
     ) -> bool:
-        if (
-            "bin/bg3" not in exec_path
-            or not self.lslib_retriever.download_lslib_if_missing()
-        ):
+        if "bin/bg3" not in exec_path:
             return True
         active_mods = self.active_mods()
-        progress = self.create_progress_window(
-            "Generating modsettings.xml", len(active_mods)
+        metadata = self.parse_mods(
+            {mod.name(): Path(mod.absolutePath()) for mod in active_mods},
+            force_reparse_metadata,
         )
-        pool = ThreadPoolExecutor()
-        futures = {
-            pool.submit(
-                self.pak_parser.get_metadata_for_files_in_mod,
-                mod,
-                force_reparse_metadata,
-            ): mod.name()
-            for mod in active_mods
-        }
-
-        def pump(done: int):
-            progress.setValue(done)
-            QApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 100)
-
-        finished = wait_for_futures(futures, progress.wasCanceled, pump)
-        pool.shutdown(wait=finished, cancel_futures=True)
-        progress.close()
-        if not finished:
+        if metadata is None:
             qWarning("modsettings.lsx generation canceled or timed out, not launching")
             return False
-        metadata: dict[str, str] = {}
-        for future, name in futures.items():
-            try:
-                metadata.update(future.result())
-            except Exception:
-                qWarning(f"skipping {name}: {traceback.format_exc()}")
         qInfo(f"writing mod load order to {self.modsettings_path}")
         self.modsettings_path.parent.mkdir(parents=True, exist_ok=True)
         self.modsettings_path.write_text(
@@ -255,9 +230,50 @@ class BG3Utils:
         shutil.copy(self.modsettings_path, self.modsettings_backup)
         return True
 
+    def parse_mods(self, mods: dict[str, Path], force: bool) -> dict[str, str] | None:
+        from .pak_parser import NeedsDivine
+
+        metadata: dict[str, str] = {}
+        while mods:
+            progress = self.create_progress_window(
+                "Generating modsettings.xml", len(mods)
+            )
+            pool = ThreadPoolExecutor()
+            futures = {
+                pool.submit(
+                    self.pak_parser.get_metadata_for_files_in_mod, path, force
+                ): name
+                for name, path in mods.items()
+            }
+
+            def pump(done: int, progress: QProgressDialog = progress):
+                progress.setValue(done)
+                QApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 100)
+
+            finished = wait_for_futures(futures, progress.wasCanceled, pump)
+            pool.shutdown(wait=finished, cancel_futures=True)
+            progress.close()
+            if not finished:
+                return None
+            retry: dict[str, Path] = {}
+            for future, name in futures.items():
+                try:
+                    metadata[name], config = future.result()
+                    if config is not None:
+                        with open(mods[name] / "meta.ini", "w", encoding="utf-8") as f:
+                            config.write(f)
+                except NeedsDivine:
+                    retry[name] = mods[name]
+                except Exception:
+                    qWarning(f"skipping {name}: {traceback.format_exc()}")
+            if retry and not self.lslib_retriever.download_lslib_if_missing():
+                qWarning(f"skipping mods that need Divine: {sorted(retry)}")
+                break
+            mods = retry
+        return metadata
+
     def on_mod_installed(self, mod: mobase.IModInterface) -> None:
-        if self.lslib_retriever.download_lslib_if_missing():
-            self.pak_parser.get_metadata_for_files_in_mod(mod, True)
+        self.parse_mods({mod.name(): Path(mod.absolutePath())}, True)
 
 
 def wait_for_futures(

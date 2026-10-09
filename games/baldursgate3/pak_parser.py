@@ -17,16 +17,18 @@ from PyQt6.QtCore import (
     qWarning,
 )
 
-import mobase
-
 from . import bg3_utils, lspk
+
+
+class NeedsDivine(Exception):
+    pass
 
 
 class BG3PakParser:
     def __init__(self, utils: bg3_utils.BG3Utils):
         self._utils = utils
+        self._mod_cache: dict[Path, bool] = {}
 
-    _mod_cache: dict[Path, bool] = {}
     _types = {
         "Folder": "",
         "MD5": "",
@@ -41,37 +43,27 @@ class BG3PakParser:
         return re.compile("Data|Script Extender|bin|Mods")
 
     def get_metadata_for_files_in_mod(
-        self, mod: mobase.IModInterface, force_reparse_metadata: bool
-    ):
-        return {
-            mod.name(): "".join(
-                [
-                    self._get_metadata_for_file(mod, file, force_reparse_metadata)
-                    for file in sorted(
-                        list(Path(mod.absolutePath()).rglob("*.pak"))
-                        + (
-                            [
-                                f
-                                for f in Path(mod.absolutePath()).glob("*")
-                                if f.is_dir()
-                            ]
-                            if self._utils.autobuild_paks
-                            else []
-                        )
-                    )
-                ]
-            )
-        }
+        self, mod_dir: Path, force_reparse_metadata: bool
+    ) -> tuple[str, configparser.ConfigParser | None]:
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(mod_dir / "meta.ini", encoding="utf-8")
+        before = {s: dict(config[s]) for s in config.sections()}
+        files = list(mod_dir.rglob("*.pak"))
+        if self._utils.autobuild_paks:
+            files += [f for f in mod_dir.glob("*") if f.is_dir()]
+        xml = "".join(
+            self._get_metadata_for_file(config, file, force_reparse_metadata)
+            for file in sorted(files)
+        )
+        changed = before != {s: dict(config[s]) for s in config.sections()}
+        return xml, config if changed else None
 
     def _get_metadata_for_file(
         self,
-        mod: mobase.IModInterface,
+        config: configparser.ConfigParser,
         file: Path,
         force_reparse_metadata: bool,
     ) -> str:
-        meta_ini = Path(mod.absolutePath()) / "meta.ini"
-        config = configparser.ConfigParser(interpolation=None)
-        config.read(meta_ini, encoding="utf-8")
         try:
             if file.name.endswith("pak"):
                 meta_file = (
@@ -112,7 +104,7 @@ class BG3PakParser:
                         )
                         can_continue = False
                     return self.metadata_to_ini(
-                        config, file, mod, meta_ini, can_continue, lambda: meta_file
+                        config, file, can_continue, lambda: meta_file
                     )
                 finally:
                     if self._utils.remove_extracted_metadata:
@@ -166,13 +158,13 @@ class BG3PakParser:
                 return self.metadata_to_ini(
                     config,
                     file,
-                    mod,
-                    meta_ini,
                     len(meta_files) > 0,
                     lambda: meta_files[0],
                 )
             else:
                 return ""
+        except NeedsDivine:
+            raise
         except Exception:
             qWarning(traceback.format_exc())
             return ""
@@ -180,7 +172,10 @@ class BG3PakParser:
     def run_divine(
         self, action: str, source: Path | str, *args: Path | str, timeout: float = 600
     ) -> subprocess.CompletedProcess[str]:
-        command = [str(self._utils.tools_dir / "Divine.exe"), "-g", "bg3", "-l", "info"]
+        divine = self._utils.tools_dir / "Divine.exe"
+        if not divine.exists():
+            raise NeedsDivine(source)
+        command = [str(divine), "-g", "bg3", "-l", "info"]
         command += ["-a", action, "-s", str(source), *map(str, args)]
         try:
             result = subprocess.run(
@@ -211,8 +206,6 @@ class BG3PakParser:
         self,
         config: configparser.ConfigParser,
         file: Path,
-        mod: mobase.IModInterface,
-        meta_ini: Path,
         condition: bool,
         to_parse: Callable[[], Path],
     ):
@@ -224,7 +217,7 @@ class BG3PakParser:
                 .find(".//node[@id='ModuleInfo']")
             )
             if root is None:
-                qInfo(f"No ModuleInfo node found in meta.lsx for {mod.name()} ")
+                qInfo(f"No ModuleInfo node found in meta.lsx for {file.name}")
             else:
                 section = config[file.name]
                 folder_name = self.get_attr_value(root, "Folder")
@@ -265,8 +258,6 @@ class BG3PakParser:
                     section["Folder"] = folder_name
         else:
             config[file.name]["override"] = "True"
-        with open(meta_ini, "w+", encoding="utf-8") as f:
-            config.write(f)
         return get_module_short_desc(config, file)
 
 
