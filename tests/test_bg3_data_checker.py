@@ -21,11 +21,42 @@ class _ModDataChecker:
     VALID = CheckReturn.VALID
 
 
+def _detach(entry: Any) -> None:
+    entry.parent._children.remove(entry)
+    entry.parent = None
+
+
 class _IFileTree:
-    def __init__(self, name: str, children: list[MagicMock]) -> None:
+    def __init__(self, name: str, children: list[Any]) -> None:
         self._name, self._children = name, children
+        self.parent: Any = None
+        self.pathFrom = MagicMock(return_value=name)
         for c in children:
             c.pathFrom.return_value = f"{name}/{c.name()}"
+            c.parent = self
+            if isinstance(c, MagicMock):
+                c.detach.side_effect = lambda c=c: _detach(c)
+
+    def detach(self) -> None:
+        self.parent._children.remove(self)
+        self.parent = None
+
+    def insert(self, entry: Any) -> None:
+        self.move(entry, "")
+
+    def move(self, entry: Any, path: str) -> None:
+        if entry.parent is not None:
+            entry.detach()
+        target: Any = self
+        for part in filter(None, path.split("/")):
+            found = next((c for c in target._children if c.name() == part), None)
+            if found is None:
+                found = _IFileTree(part, [])
+                target._children.append(found)
+                found.parent = target
+            target = found
+        target._children.append(entry)
+        entry.parent = target
 
     def name(self) -> str:
         return self._name
@@ -63,6 +94,26 @@ class DataLooksValidTest(unittest.TestCase):
         self.assertEqual(
             BG3ModDataChecker().dataLooksValid(root),  # type: ignore[arg-type]
             _ModDataChecker.FIXABLE,
+        )
+
+    def test_mods_subfolder_paks_fixable(self):
+        tree = _IFileTree(
+            "", [_IFileTree("Mods", [_IFileTree("Sub", [_file("x.pak")])])]
+        )
+        checker = BG3ModDataChecker()
+        self.assertEqual(checker.dataLooksValid(tree), _ModDataChecker.FIXABLE)  # type: ignore[arg-type]
+        checker.fix(tree)  # type: ignore[arg-type]
+        mods = next(e for e in tree if e.name() == "Mods")
+        self.assertEqual([e.name() for e in mods], ["x.pak"])
+
+    def test_mods_subfolder_pak_name_clash_invalid(self):
+        tree = _IFileTree(
+            "",
+            [_IFileTree("Mods", [_file("x.pak"), _IFileTree("Sub", [_file("X.pak")])])],
+        )
+        self.assertEqual(
+            BG3ModDataChecker().dataLooksValid(tree),  # type: ignore[arg-type]
+            _ModDataChecker.INVALID,
         )
 
 
