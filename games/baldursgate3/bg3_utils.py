@@ -1,3 +1,4 @@
+import configparser
 import functools
 import shutil
 import traceback
@@ -26,6 +27,36 @@ loose_file_folders = {
     "Localization",
     "ScriptExtender",
 }
+
+
+def _mod_entries(mod_dir: Path) -> list[tuple[str, str, list[str]]]:
+    config = configparser.ConfigParser(interpolation=None)
+    config.read(mod_dir / "meta.ini", encoding="utf-8")
+    return [
+        (
+            s["UUID"],
+            s.get("Name", s["UUID"]),
+            s.get("dependencies", "").split(",") if s.get("dependencies") else [],
+        )
+        for s in map(config.__getitem__, config.sections())
+        if s.get("UUID") and "override" not in s
+    ]
+
+
+def dependency_order_warnings(
+    order: list[tuple[str, str, list[str]]], installed: set[str]
+) -> list[str]:
+    position = {uuid: i for i, (uuid, _, _) in enumerate(order)}
+    warnings: list[str] = []
+    for i, (_, name, deps) in enumerate(order):
+        for dep in filter(installed.__contains__, deps):
+            if dep not in position:
+                warnings.append(
+                    f"{name} depends on {dep}, which is not in the load order"
+                )
+            elif position[dep] > i:
+                warnings.append(f"{name} depends on {dep}, which loads after it")
+    return warnings
 
 
 def get_node_string(
@@ -208,6 +239,22 @@ class BG3Utils:
         if metadata is None:
             qWarning("modsettings.lsx generation canceled or timed out, not launching")
             return False
+        for warning in dependency_order_warnings(
+            [
+                m
+                for mod in active_mods
+                if mod.name() in metadata
+                for m in _mod_entries(Path(mod.absolutePath()))
+            ],
+            {
+                m[0]
+                for name in self._organizer.modList().allMods()
+                for m in _mod_entries(
+                    Path(self._organizer.modList().getMod(name).absolutePath())
+                )
+            },
+        ):
+            qWarning(warning)
         qInfo(f"writing mod load order to {self.modsettings_path}")
         self.modsettings_path.parent.mkdir(parents=True, exist_ok=True)
         self.modsettings_path.write_text(

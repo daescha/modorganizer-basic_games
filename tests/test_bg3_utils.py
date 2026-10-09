@@ -66,3 +66,23 @@ class WaitForFuturesTest(unittest.TestCase):
                 )
             )
             event.set()
+
+
+class DependencyOrderTest(unittest.TestCase):
+    def test_warns_on_missing_and_late_dependencies(self):
+        order: list[tuple[str, str, list[str]]] = [
+            ("a", "A", ["b", "c", "x"]),
+            ("b", "B", []),
+            ("d", "D", ["a"]),
+        ]
+        self.assertEqual(
+            bg3_utils.dependency_order_warnings(order, {"a", "b", "c", "d"}),
+            [
+                "A depends on b, which loads after it",
+                "A depends on c, which is not in the load order",
+            ],
+        )
+
+    def test_correct_order_has_no_warnings(self):
+        order: list[tuple[str, str, list[str]]] = [("b", "B", []), ("a", "A", ["b"])]
+        self.assertEqual(bg3_utils.dependency_order_warnings(order, {"a", "b"}), [])
