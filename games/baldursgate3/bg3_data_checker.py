@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Callable, TypeGuard
+from xml.etree import ElementTree
 
 import mobase
 
@@ -54,6 +55,25 @@ def choose_variant_dialog(names: list[str]) -> str | None:
         False,
     )
     return name if ok else None
+
+
+def modsettings_emptied(backup: str, current: str) -> bool:
+    """True if the backup lists mods besides GustavX and the current modsettings.lsx lists none."""
+
+    def mods(text: str) -> list[str]:
+        try:
+            root = ElementTree.fromstring(text)
+        except ElementTree.ParseError:
+            return []
+        return [
+            a.get("value", "")
+            for n in root.iter("node")
+            if n.get("id") == "ModuleShortDesc"
+            for a in n.iter("attribute")
+            if a.get("id") == "Folder" and a.get("value") != "GustavX"
+        ]
+
+    return bool(mods(backup)) and not mods(current)
 
 
 def mods_dir(filetree: mobase.IFileTree) -> mobase.IFileTree | None:

@@ -6,13 +6,14 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QLoggingCategory, qDebug, qInfo
+from PyQt6.QtCore import QLoggingCategory, qDebug, qInfo, qWarning
+from PyQt6.QtWidgets import QMessageBox
 
 import mobase
 
 from ..basic_features import BasicGameSaveGameInfo, BasicLocalSavegames
 from ..basic_game import BasicGame
-from .baldursgate3 import bg3_file_mapper, bg3_utils
+from .baldursgate3 import bg3_data_checker, bg3_file_mapper, bg3_utils
 
 
 class BG3Game(BasicGame, bg3_file_mapper.BG3FileMapper):
@@ -45,7 +46,7 @@ class BG3Game(BasicGame, bg3_file_mapper.BG3FileMapper):
     def init(self, organizer: mobase.IOrganizer) -> bool:
         super().init(organizer)
         self.utils.init(organizer)
-        from .baldursgate3 import bg3_data_checker, bg3_data_content
+        from .baldursgate3 import bg3_data_content
 
         self._register_feature(bg3_data_checker.BG3ModDataChecker())
         self._register_feature(bg3_data_content.BG3DataContent())
@@ -161,9 +162,26 @@ class BG3Game(BasicGame, bg3_file_mapper.BG3FileMapper):
         base_bin = Path(self.gameDirectory().absoluteFilePath("bin"))
         return {str(f.relative_to(base_bin)) for f in base_bin.glob("*.dll")}
 
+    def _warn_if_modsettings_emptied(self):
+        backup, current = self.utils.modsettings_backup, self.utils.modsettings_path
+        if not (backup.exists() and current.exists()):
+            return
+        if not bg3_data_checker.modsettings_emptied(
+            backup.read_text(encoding="utf-8"), current.read_text(encoding="utf-8")
+        ):
+            return
+        msg = self.utils.tr(
+            "The game removed all mods from modsettings.lsx. The usual cause is an "
+            "invalid mod or subfolders in Mods/."
+        )
+        qWarning(msg)
+        if self.utils.main_window is not None:
+            QMessageBox.warning(self.utils.main_window, self.gameName(), msg)
+
     def _on_finished_run(self, exec_path: str, exit_code: int):
         if "bin/bg3" not in exec_path:
             return
+        self._warn_if_modsettings_emptied()
         cat = QLoggingCategory.defaultCategory()
         self.utils.log_dir.mkdir(parents=True, exist_ok=True)
         if (
