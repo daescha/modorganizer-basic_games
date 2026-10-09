@@ -22,41 +22,52 @@ class _ModDataChecker:
 
 
 def _detach(entry: Any) -> None:
-    entry.parent._children.remove(entry)
-    entry.parent = None
+    entry._up._children.remove(entry)
+    entry._up = None
+
+
+def _adopt(parent: Any, entry: Any) -> None:
+    entry._up = parent
+    if isinstance(entry, MagicMock):
+        entry.parent.side_effect = lambda: entry._up
+        entry.detach.side_effect = lambda: _detach(entry)
 
 
 class _IFileTree:
     def __init__(self, name: str, children: list[Any]) -> None:
         self._name, self._children = name, children
-        self.parent: Any = None
+        self._up: Any = None
         self.pathFrom = MagicMock(return_value=name)
         for c in children:
             c.pathFrom.return_value = f"{name}/{c.name()}"
-            c.parent = self
-            if isinstance(c, MagicMock):
-                c.detach.side_effect = lambda c=c: _detach(c)
+            _adopt(self, c)
+
+    def parent(self) -> Any:
+        return self._up
 
     def detach(self) -> None:
-        self.parent._children.remove(self)
-        self.parent = None
+        _detach(self)
+
+    def merge(self, other: Any) -> None:
+        for c in list(other):
+            self.move(c, "")
 
     def insert(self, entry: Any) -> None:
         self.move(entry, "")
 
     def move(self, entry: Any, path: str) -> None:
-        if entry.parent is not None:
-            entry.detach()
+        if entry._up is not None:
+            _detach(entry)
         target: Any = self
         for part in filter(None, path.split("/")):
             found = next((c for c in target._children if c.name() == part), None)
             if found is None:
                 found = _IFileTree(part, [])
                 target._children.append(found)
-                found.parent = target
+                found._up = target
             target = found
         target._children.append(entry)
-        entry.parent = target
+        _adopt(target, entry)
 
     def name(self) -> str:
         return self._name
@@ -115,6 +126,72 @@ class DataLooksValidTest(unittest.TestCase):
             BG3ModDataChecker().dataLooksValid(tree),  # type: ignore[arg-type]
             _ModDataChecker.INVALID,
         )
+
+
+_mod = importlib.import_module("basic_games.games.baldursgate3.bg3_data_checker")
+
+
+def _variant_tree() -> Any:
+    return _IFileTree(
+        "",
+        [
+            _IFileTree("Option A", [_file("a.pak")]),
+            _IFileTree("Option B", [_file("b.pak"), _file("readme.md")]),
+        ],
+    )
+
+
+def _pick_b(names: list[str]) -> str | None:
+    return "Option B"
+
+
+def _cancel(names: list[str]) -> str | None:
+    return None
+
+
+class PakVariantsTest(unittest.TestCase):
+    def test_folders_with_one_pak_each_are_variants(self):
+        self.assertEqual(
+            sorted(_mod.pak_variants(_variant_tree())), ["Option A", "Option B"]
+        )
+
+    def test_single_wrapper_folder_is_skipped(self):
+        tree = _IFileTree("", [_IFileTree("Wrap", list(_variant_tree()))])
+        self.assertEqual(sorted(_mod.pak_variants(tree)), ["Option A", "Option B"])
+
+    def test_folder_with_two_paks_is_no_variant_set(self):
+        tree = _IFileTree(
+            "",
+            [
+                _IFileTree("A", [_file("a.pak"), _file("c.pak")]),
+                _IFileTree("B", [_file("b.pak")]),
+            ],
+        )
+        self.assertEqual(_mod.pak_variants(tree), {})
+
+    def test_root_pak_is_no_variant_set(self):
+        tree = _variant_tree()
+        tree._children.append(_file("main.pak"))
+        self.assertEqual(_mod.pak_variants(tree), {})
+
+    def test_known_folders_are_no_variants(self):
+        tree = _IFileTree(
+            "",
+            [_IFileTree("Mods", [_file("a.pak")]), _IFileTree("B", [_file("b.pak")])],
+        )
+        self.assertEqual(_mod.pak_variants(tree), {})
+
+    def test_fix_keeps_chosen_variant(self):
+        tree = _variant_tree()
+        checker = BG3ModDataChecker(choose_variant=_pick_b)
+        self.assertEqual(checker.dataLooksValid(tree), _ModDataChecker.FIXABLE)
+        checker.fix(tree)
+        self.assertEqual(sorted(e.name() for e in tree), ["b.pak", "readme.md"])
+
+    def test_fix_cancel_keeps_all(self):
+        tree = _variant_tree()
+        BG3ModDataChecker(choose_variant=_cancel).fix(tree)
+        self.assertEqual(sorted(e.name() for e in tree), ["Option A", "Option B"])
 
 
 if __name__ == "__main__":
