@@ -186,9 +186,14 @@ class BG3ModDataChecker(BasicModDataChecker):
                     if name != chosen:
                         folder.detach()
                 folder = variants[chosen]
-                if (parent := folder.parent()) is not None:
-                    parent.merge(folder)
-                    folder.detach()
+                wrapper = folder.parent()
+                filetree.merge(folder)
+                folder.detach()
+                while wrapper is not None and wrapper.parent() is not None:
+                    up = wrapper.parent()
+                    if not list(wrapper):
+                        wrapper.detach()
+                    wrapper = up
         paks, subdirs, _ = nested_mod_paks(filetree)
         for pak in paks:
             filetree.move(pak, "Mods/")

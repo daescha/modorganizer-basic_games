@@ -189,6 +189,11 @@ class PakVariantsTest(unittest.TestCase):
         checker.fix(tree)
         self.assertEqual(sorted(e.name() for e in tree), ["b.pak", "readme.md"])
 
+    def test_fix_moves_wrapped_variant_to_root(self):
+        tree = _IFileTree("", [_IFileTree("Wrap", list(_variant_tree()))])
+        BG3ModDataChecker(choose_variant=_pick_b).fix(tree)
+        self.assertEqual(sorted(e.name() for e in tree), ["b.pak", "readme.md"])
+
     def test_fix_cancel_keeps_all(self):
         tree = _variant_tree()
         BG3ModDataChecker(choose_variant=_cancel).fix(tree)
