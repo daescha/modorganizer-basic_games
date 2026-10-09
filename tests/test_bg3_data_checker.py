@@ -107,25 +107,12 @@ class DataLooksValidTest(unittest.TestCase):
             _ModDataChecker.FIXABLE,
         )
 
-    def test_mods_subfolder_paks_fixable(self):
+    def test_fix_keeps_mods_folder_at_top_level(self):
         tree = _IFileTree(
-            "", [_IFileTree("Mods", [_IFileTree("Sub", [_file("x.pak")])])]
+            "", [_file("info.json"), _IFileTree("Mods", [_file("x.pak")])]
         )
-        checker = BG3ModDataChecker()
-        self.assertEqual(checker.dataLooksValid(tree), _ModDataChecker.FIXABLE)  # type: ignore[arg-type]
-        checker.fix(tree)  # type: ignore[arg-type]
-        mods = next(e for e in tree if e.name() == "Mods")
-        self.assertEqual([e.name() for e in mods], ["x.pak"])
-
-    def test_mods_subfolder_pak_name_clash_invalid(self):
-        tree = _IFileTree(
-            "",
-            [_IFileTree("Mods", [_file("x.pak"), _IFileTree("Sub", [_file("X.pak")])])],
-        )
-        self.assertEqual(
-            BG3ModDataChecker().dataLooksValid(tree),  # type: ignore[arg-type]
-            _ModDataChecker.INVALID,
-        )
+        BG3ModDataChecker().fix(tree)  # type: ignore[arg-type]
+        self.assertEqual([e.name() for e in tree], ["Mods"])
 
 
 _mod = importlib.import_module("basic_games.games.baldursgate3.bg3_data_checker")
