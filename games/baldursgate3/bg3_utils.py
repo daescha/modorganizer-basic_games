@@ -76,7 +76,7 @@ class BG3Utils:
         from . import lslib_retriever, pak_parser
 
         self.lslib_retriever = lslib_retriever.LSLibRetriever(self)
-        self._pak_parser = pak_parser.BG3PakParser(self)
+        self.pak_parser = pak_parser.BG3PakParser(self)
 
     def init(self, organizer: mobase.IOrganizer):
         self._organizer = organizer
@@ -84,10 +84,6 @@ class BG3Utils:
     @functools.cached_property
     def autobuild_paks(self):
         return bool(self.get_setting("autobuild_paks"))
-
-    @functools.cached_property
-    def extract_full_package(self):
-        return bool(self.get_setting("extract_full_package"))
 
     @functools.cached_property
     def remove_extracted_metadata(self):
@@ -181,7 +177,6 @@ class BG3Utils:
         if self._name != plugin_name:
             return
         if setting in {
-            "extract_full_package",
             "autobuild_paks",
             "remove_extracted_metadata",
             "force_load_dlls",
@@ -213,7 +208,7 @@ class BG3Utils:
 
         def retrieve_mod_metadata_in_new_thread(mod: mobase.IModInterface):
             return lambda: metadata.update(
-                self._pak_parser.get_metadata_for_files_in_mod(
+                self.pak_parser.get_metadata_for_files_in_mod(
                     mod, force_reparse_metadata
                 )
             )
@@ -264,7 +259,7 @@ class BG3Utils:
 
     def on_mod_installed(self, mod: mobase.IModInterface) -> None:
         if self.lslib_retriever.download_lslib_if_missing():
-            self._pak_parser.get_metadata_for_files_in_mod(mod, True)
+            self.pak_parser.get_metadata_for_files_in_mod(mod, True)
 
 
 def create_dir_if_needed(path: Path) -> Path:

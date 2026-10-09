@@ -2,7 +2,6 @@ import configparser
 import hashlib
 import os
 import re
-import shutil
 import subprocess
 import traceback
 import zlib
@@ -97,43 +96,16 @@ class BG3PakParser:
                         return get_module_short_desc(config, file)
                     meta_file.parent.mkdir(parents=True, exist_ok=True)
                     meta_file.unlink(missing_ok=True)
-                    out_dir = (
-                        str(meta_file)[:-4] if self._utils.extract_full_package else ""
-                    )
                     can_continue = True
                     try:
-                        if self._utils.extract_full_package:
-                            raise lspk.UnsupportedPak("full package extraction")
                         if (meta := lspk.read_meta(file)) is not None:
                             meta_file.write_bytes(meta)
                     except (lspk.UnsupportedPak, OSError, zlib.error) as e:
                         qDebug(f"using Divine for {file.name}: {e}")
-                        if self.run_divine(
-                            f'{"extract-package" if self._utils.extract_full_package else "extract-single-file -f meta.lsx"} -d "{meta_file if not self._utils.extract_full_package else out_dir}"',
-                            file,
-                        ).returncode:
-                            can_continue = False
-                    if can_continue and self._utils.extract_full_package:
-                        qDebug(f"archive {file} extracted to {out_dir}")
-                        if self.run_divine(
-                            f'convert-resources -d "{out_dir}" -i lsf -o lsx -x "*.lsf"',
-                            out_dir,
-                        ).returncode:
-                            qDebug(
-                                f"failed to convert lsf files in {out_dir} to readable lsx"
-                            )
-                        extracted_meta_files = list(Path(out_dir).rglob("meta.lsx"))
-                        if len(extracted_meta_files) == 0:
-                            qInfo(
-                                f"No meta.lsx files found in {file.name}, {file.name} determined to be an override mod"
-                            )
-                            can_continue = False
-                        else:
-                            shutil.copyfile(
-                                extracted_meta_files[0],
-                                meta_file,
-                            )
-                    elif can_continue and not meta_file.exists():
+                        can_continue = not self.run_divine(
+                            f'extract-single-file -f meta.lsx -d "{meta_file}"', file
+                        ).returncode
+                    if can_continue and not meta_file.exists():
                         qInfo(
                             f"No meta.lsx files found in {file.name}, {file.name} determined to be an override mod"
                         )
@@ -144,8 +116,6 @@ class BG3PakParser:
                 finally:
                     if self._utils.remove_extracted_metadata:
                         meta_file.unlink(missing_ok=True)
-                        if self._utils.extract_full_package:
-                            Path(str(meta_file)[:-4]).unlink(missing_ok=True)
             elif file.is_dir():
                 if self._folder_pattern.search(file.name):
                     return ""

@@ -90,11 +90,6 @@ class BG3Game(BasicGame, bg3_file_mapper.BG3FileMapper):
                 True,
             ),
             mobase.PluginSetting(
-                "extract_full_package",
-                "Extract the full pak when parsing metadata, instead of just meta.lsx.",
-                False,
-            ),
-            mobase.PluginSetting(
                 "convert_yamls_to_json",
                 "Convert YAMLs to JSONs when executable runs. Allows one to configure ScriptExtender and related mods with YAML files.",
                 False,
