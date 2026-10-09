@@ -27,9 +27,18 @@ class BG3ToolExtractPak(BG3ToolPlugin):
             return
         out_dir = utils.plugin_data_path / "temp" / "extracted" / Path(pak).stem
         parser = utils.pak_parser
-        if parser.run_divine(f'extract-package -d "{out_dir}"', pak).returncode:
+        if parser.run_divine("extract-package", pak, "-d", out_dir).returncode:
             return
         parser.run_divine(
-            f'convert-resources -d "{out_dir}" -i lsf -o lsx -x "*.lsf"', out_dir
+            "convert-resources",
+            out_dir,
+            "-d",
+            out_dir,
+            "-i",
+            "lsf",
+            "-o",
+            "lsx",
+            "-x",
+            "*.lsf",
         )
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(out_dir)))

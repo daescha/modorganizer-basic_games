@@ -37,10 +37,6 @@ class BG3PakParser:
     }
 
     @cached_property
-    def _divine_command(self):
-        return f"{self._utils.tools_dir / 'Divine.exe'} -g bg3 -l info"
-
-    @cached_property
     def _folder_pattern(self):
         return re.compile("Data|Script Extender|bin|Mods")
 
@@ -103,7 +99,12 @@ class BG3PakParser:
                     except (lspk.UnsupportedPak, OSError, zlib.error) as e:
                         qDebug(f"using Divine for {file.name}: {e}")
                         can_continue = not self.run_divine(
-                            f'extract-single-file -f meta.lsx -d "{meta_file}"', file
+                            "extract-single-file",
+                            file,
+                            "-f",
+                            "meta.lsx",
+                            "-d",
+                            meta_file,
                         ).returncode
                     if can_continue and not meta_file.exists():
                         qInfo(
@@ -158,7 +159,7 @@ class BG3PakParser:
                 if build_pak:
                     pak_path.unlink(missing_ok=True)
                     if self.run_divine(
-                        f'create-package -d "{pak_path}"', file
+                        "create-package", file, "-d", pak_path
                     ).returncode:
                         return ""
                 meta_files = list(file.glob("Mods/*/meta.lsx"))
@@ -177,20 +178,26 @@ class BG3PakParser:
             return ""
 
     def run_divine(
-        self, action: str, source: Path | str
+        self, action: str, source: Path | str, *args: Path | str, timeout: float = 600
     ) -> subprocess.CompletedProcess[str]:
-        command = f'{self._divine_command} -a {action} -s "{source}"'
-        result = subprocess.run(
-            command,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        command = [str(self._utils.tools_dir / "Divine.exe"), "-g", "bg3", "-l", "info"]
+        command += ["-a", action, "-s", str(source), *map(str, args)]
+        try:
+            result = subprocess.run(
+                command,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            result = subprocess.CompletedProcess(
+                command, 1, "", f"timed out after {timeout}s"
+            )
         if result.returncode:
             qWarning(
-                f"{command.replace(str(Path.home()), '~', 1).replace(str(Path.home()), '$HOME')}"
+                f"{subprocess.list2cmdline(command).replace(str(Path.home()), '~')}"
                 f" returned stdout: {result.stdout}, stderr: {result.stderr}, code {result.returncode}"
             )
         return result
@@ -244,7 +251,7 @@ class BG3PakParser:
                     except (lspk.UnsupportedPak, OSError) as e:
                         qDebug(f"using Divine to list {file.name}: {e}")
                         result = self.run_divine(
-                            f'list-package --use-regex -x "{pattern.pattern}"', file
+                            "list-package", file, "--use-regex", "-x", pattern.pattern
                         )
                         self._mod_cache[file] = (
                             result.returncode == 0 and result.stdout.strip() != ""
