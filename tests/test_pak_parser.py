@@ -53,6 +53,20 @@ class ParseModTest(unittest.TestCase):
             self.parser.get_metadata_for_files_in_mod(self.mod, False), ("", None)
         )
 
+    def test_replaced_pak_is_reparsed(self):
+        files = [("Mods/Foo/meta.lsx", META, 1), ("Mods/Foo/x.txt", b"x", 0)]
+        build_pak(self.mod, files)
+        _, config = self.parser.get_metadata_for_files_in_mod(self.mod, False)
+        assert config is not None
+        with open(self.mod / "meta.ini", "w", encoding="utf-8") as f:
+            config.write(f)
+        build_pak(
+            self.mod,
+            [("Mods/Foo/meta.lsx", META.replace(b"u-1", b"u-22"), 1), files[1]],
+        )
+        xml, _ = self.parser.get_metadata_for_files_in_mod(self.mod, False)
+        self.assertIn('value="u-22"', xml)
+
     def test_unreadable_pak_needs_divine(self):
         build_pak(self.mod, [("Mods/Foo/meta.lsx", META, 3)])
         with self.assertRaises(pak_parser.NeedsDivine):
