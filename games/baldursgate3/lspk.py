@@ -1,6 +1,7 @@
 import struct
 import zlib
 from pathlib import Path
+from typing import BinaryIO
 
 _HEADER = struct.Struct("<4sIQIBB16sH")
 _ENTRY = struct.Struct("<256sIHBBII")
@@ -44,28 +45,43 @@ def lz4_block(src: bytes, size: int) -> bytes:
     return bytes(out)
 
 
+def _file_list(
+    f: BinaryIO, pak: Path
+) -> tuple[bool, list[tuple[str, int, int, int, int, int]]]:
+    sig, version, list_offset, _, flags, _, _, _ = _HEADER.unpack(f.read(_HEADER.size))
+    if sig != b"LSPK" or version != 18:
+        raise UnsupportedPak(f"{pak.name}: signature {sig!r}, version {version}")
+    f.seek(list_offset)
+    count, list_size = struct.unpack("<II", f.read(8))
+    entries = lz4_block(f.read(list_size), count * _ENTRY.size)
+    return bool(flags & _SOLID), [
+        (
+            name.split(b"\0", 1)[0].decode("utf-8").replace("\\", "/"),
+            off1 | off2 << 32,
+            part,
+            method,
+            on_disk,
+            size,
+        )
+        for name, off1, off2, part, method, on_disk, size in _ENTRY.iter_unpack(entries)
+    ]
+
+
+def list_files(pak: Path) -> list[str]:
+    with pak.open("rb") as f:
+        return [entry[0] for entry in _file_list(f, pak)[1]]
+
+
 def read_meta(pak: Path) -> bytes | None:
     with pak.open("rb") as f:
-        sig, version, list_offset, _, flags, _, _, _ = _HEADER.unpack(
-            f.read(_HEADER.size)
-        )
-        if sig != b"LSPK" or version != 18:
-            raise UnsupportedPak(f"{pak.name}: signature {sig!r}, version {version}")
-        if flags & _SOLID:
-            raise UnsupportedPak(f"{pak.name}: solid package")
-        f.seek(list_offset)
-        count, list_size = struct.unpack("<II", f.read(8))
-        entries = lz4_block(f.read(list_size), count * _ENTRY.size)
-        for name, off1, off2, part, method, on_disk, size in _ENTRY.iter_unpack(
-            entries
-        ):
-            path = name.split(b"\0", 1)[0].decode("utf-8").replace("\\", "/")
+        solid, entries = _file_list(f, pak)
+        for path, offset, part, method, on_disk, size in entries:
             parts = path.split("/")
             if len(parts) != 3 or parts[0] != "Mods" or parts[2] != "meta.lsx":
                 continue
-            if part:
-                raise UnsupportedPak(f"{pak.name}: meta.lsx in archive part {part}")
-            f.seek(off1 | off2 << 32)
+            if solid or part:
+                raise UnsupportedPak(f"{pak.name}: solid or archive part {part}")
+            f.seek(offset)
             data = f.read(on_disk)
             match method & 0x0F:
                 case 0:

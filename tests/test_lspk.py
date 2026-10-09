@@ -98,3 +98,12 @@ class ReadMetaTest(unittest.TestCase):
 
     def test_lz4_block_overlapping_match(self):
         self.assertEqual(lspk.lz4_block(b"\x35abc\x03\x00", 12), b"abc" * 4)
+
+    def test_list_files_includes_unsupported_paks(self):
+        files = [("Mods/X/meta.lsx", META, 3), ("Public\\X\\a.lsx", b"x", 2)]
+        for flags in (0, 4):
+            with self.subTest(flags=flags):
+                pak = build_pak(self.tmp, files, flags)
+                self.assertEqual(
+                    lspk.list_files(pak), ["Mods/X/meta.lsx", "Public/X/a.lsx"]
+                )
