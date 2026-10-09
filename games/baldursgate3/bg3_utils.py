@@ -1,18 +1,17 @@
 import functools
 import shutil
+import traceback
 import typing
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
-from time import sleep
+from time import monotonic
 from xml.sax.saxutils import escape
 
 from PyQt6.QtCore import (
     QCoreApplication,
     QDir,
     QEventLoop,
-    QRunnable,
     Qt,
-    QThread,
-    QThreadPool,
     qInfo,
     qWarning,
 )
@@ -208,39 +207,32 @@ class BG3Utils:
         progress = self.create_progress_window(
             "Generating modsettings.xml", len(active_mods)
         )
-        threadpool = QThreadPool.globalInstance()
-        if threadpool is None:
+        pool = ThreadPoolExecutor()
+        futures = {
+            pool.submit(
+                self.pak_parser.get_metadata_for_files_in_mod,
+                mod,
+                force_reparse_metadata,
+            ): mod.name()
+            for mod in active_mods
+        }
+
+        def pump(done: int):
+            progress.setValue(done)
+            QApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 100)
+
+        finished = wait_for_futures(futures, progress.wasCanceled, pump)
+        pool.shutdown(wait=finished, cancel_futures=True)
+        progress.close()
+        if not finished:
+            qWarning("modsettings.lsx generation canceled or timed out, not launching")
             return False
         metadata: dict[str, str] = {}
-
-        def retrieve_mod_metadata_in_new_thread(mod: mobase.IModInterface):
-            return lambda: metadata.update(
-                self.pak_parser.get_metadata_for_files_in_mod(
-                    mod, force_reparse_metadata
-                )
-            )
-
-        for mod in active_mods:
-            if progress.wasCanceled():
-                qWarning("processing canceled by user")
-                return False
-            threadpool.start(QRunnable.create(retrieve_mod_metadata_in_new_thread(mod)))
-        count = 0
-        num_active_mods = len(active_mods)
-        total_intervals_to_wait = (num_active_mods * 2) + 20
-        while len(metadata.keys()) < num_active_mods:
-            progress.setValue(len(metadata.keys()))
-            QApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 100)
-            count += 1
-            if count == total_intervals_to_wait or progress.wasCanceled():
-                remaining_mods = {mod.name() for mod in active_mods} - metadata.keys()
-                qWarning(f"processing did not finish in time for: {remaining_mods}")
-                progress.close()
-                break
-            QThread.msleep(100)
-        progress.setValue(num_active_mods)
-        QApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 100)
-        progress.close()
+        for future, name in futures.items():
+            try:
+                metadata.update(future.result())
+            except Exception:
+                qWarning(f"skipping {name}: {traceback.format_exc()}")
         qInfo(f"writing mod load order to {self.modsettings_path}")
         self.modsettings_path.parent.mkdir(parents=True, exist_ok=True)
         self.modsettings_path.write_text(
@@ -261,12 +253,29 @@ class BG3Utils:
         )
         self.modsettings_backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(self.modsettings_path, self.modsettings_backup)
-        sleep(0.5)
         return True
 
     def on_mod_installed(self, mod: mobase.IModInterface) -> None:
         if self.lslib_retriever.download_lslib_if_missing():
             self.pak_parser.get_metadata_for_files_in_mod(mod, True)
+
+
+def wait_for_futures(
+    futures: typing.Collection[Future[typing.Any]],
+    canceled: typing.Callable[[], bool],
+    progress: typing.Callable[[int], None],
+    stall_timeout: float = 600,
+) -> bool:
+    pending = set(futures)
+    deadline = monotonic() + stall_timeout
+    while pending:
+        if canceled() or monotonic() > deadline:
+            return False
+        done, pending = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+        if done:
+            deadline = monotonic() + stall_timeout
+        progress(len(futures) - len(pending))
+    return True
 
 
 def create_dir_if_needed(path: Path, is_file: bool = False) -> Path:

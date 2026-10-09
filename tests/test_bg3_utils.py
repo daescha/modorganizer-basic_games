@@ -1,6 +1,9 @@
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock
 from xml.etree import ElementTree
@@ -32,3 +35,34 @@ class ProfilePathTest(unittest.TestCase):
                 self.assertEqual(
                     utils.modsettings_path, Path(tmp, profile, "modsettings.lsx")
                 )
+
+
+class WaitForFuturesTest(unittest.TestCase):
+    def test_all_done_reports_progress(self):
+        with ThreadPoolExecutor() as pool:
+            futures = [pool.submit(time.sleep, 0.05) for _ in range(3)]
+            seen: list[int] = []
+            self.assertTrue(
+                bg3_utils.wait_for_futures(futures, lambda: False, seen.append)
+            )
+        self.assertEqual(seen[-1], 3)
+
+    def test_cancel_aborts(self):
+        event = threading.Event()
+        with ThreadPoolExecutor() as pool:
+            futures = [pool.submit(event.wait)]
+            self.assertFalse(
+                bg3_utils.wait_for_futures(futures, lambda: True, lambda _: None)
+            )
+            event.set()
+
+    def test_stall_aborts(self):
+        event = threading.Event()
+        with ThreadPoolExecutor() as pool:
+            futures = [pool.submit(event.wait)]
+            self.assertFalse(
+                bg3_utils.wait_for_futures(
+                    futures, lambda: False, lambda _: None, stall_timeout=0.3
+                )
+            )
+            event.set()
