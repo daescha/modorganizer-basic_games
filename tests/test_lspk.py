@@ -19,30 +19,40 @@ def lz4_literals(data: bytes) -> bytes:
 
 
 def build_pak(
-    tmp_path: Path, files: list[tuple[str, bytes, int]], flags: int = 0, part: int = 0
+    tmp_path: Path,
+    files: list[tuple[str, bytes, int]],
+    flags: int = 0,
+    part: int = 0,
+    version: int = 18,
 ) -> Path:
-    body, entries, offset = bytearray(), bytearray(), 40
+    body, entries = bytearray(), bytearray()
+    offset = 38 if version == 15 else 40
     for name, data, method in files:
         stored = {0: data, 1: zlib.compress(data), 2: lz4_literals(data), 3: data}[
             method
         ]
         size = 0 if method == 0 else len(data)
-        entries += name.encode().ljust(256, b"\0") + struct.pack(
-            "<IHBBII", offset + len(body), 0, part, method, len(stored), size
-        )
+        entries += name.encode().ljust(256, b"\0")
+        if version == 18:
+            entries += struct.pack(
+                "<IHBBII", offset + len(body), 0, part, method, len(stored), size
+            )
+        else:
+            entries += struct.pack(
+                "<QQQIIII", offset + len(body), len(stored), size, part, method, 0, 0
+            )
         body += stored
     file_list = lz4_literals(bytes(entries))
     header = struct.pack(
-        "<4sIQIBB16sH",
+        "<4sIQIBB16s",
         b"LSPK",
-        18,
-        40 + len(body),
+        version,
+        offset + len(body),
         8 + len(file_list),
         flags,
         0,
         b"",
-        1,
-    )
+    ) + (b"" if version == 15 else struct.pack("<H", 1))
     pak = tmp_path / "test.pak"
     pak.write_bytes(
         header + body + struct.pack("<II", len(files), len(file_list)) + file_list
@@ -92,9 +102,20 @@ class ReadMetaTest(unittest.TestCase):
     def test_rejects_other_versions(self):
         pak = build_pak(self.tmp, [("Mods/X/meta.lsx", META, 0)])
         data = pak.read_bytes()
-        pak.write_bytes(data[:4] + struct.pack("<I", 16) + data[8:])
+        pak.write_bytes(data[:4] + struct.pack("<I", 13) + data[8:])
         with self.assertRaises(lspk.UnsupportedPak):
             lspk.read_meta(pak)
+
+    def test_reads_older_versions(self):
+        for version in (15, 16):
+            for method in (1, 2):
+                pak = build_pak(
+                    self.tmp,
+                    [("Mods/X/x.txt", b"x", 0), ("Mods/X/meta.lsx", META, method)],
+                    version=version,
+                )
+                self.assertEqual(lspk.read_meta(pak), META, (version, method))
+                self.assertIn("Mods/X/x.txt", lspk.list_files(pak))
 
     def test_lz4_block_overlapping_match(self):
         self.assertEqual(lspk.lz4_block(b"\x35abc\x03\x00", 12), b"abc" * 4)
