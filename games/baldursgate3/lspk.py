@@ -3,8 +3,9 @@ import zlib
 from pathlib import Path
 from typing import BinaryIO
 
-_HEADER = struct.Struct("<4sIQIBB16sH")
+_HEADER = struct.Struct("<4sIQIBB16s")
 _ENTRY = struct.Struct("<256sIHBBII")
+_ENTRY15 = struct.Struct("<256sQQQIIII")
 _SOLID = 0x04
 
 
@@ -53,22 +54,26 @@ def lz4_block(src: bytes, size: int) -> bytes:
 def _file_list(
     f: BinaryIO, pak: Path
 ) -> tuple[bool, list[tuple[str, int, int, int, int, int]]]:
-    sig, version, list_offset, _, flags, _, _, _ = _HEADER.unpack(f.read(_HEADER.size))
-    if sig != b"LSPK" or version != 18:
+    sig, version, list_offset, _, flags, _, _ = _HEADER.unpack(f.read(_HEADER.size))
+    if sig != b"LSPK" or version not in (15, 16, 18):
         raise UnsupportedPak(f"{pak.name}: signature {sig!r}, version {version}")
     f.seek(list_offset)
     count, list_size = struct.unpack("<II", f.read(8))
-    entries = lz4_block(f.read(list_size), count * _ENTRY.size)
+    entry = _ENTRY if version == 18 else _ENTRY15
+    raw = entry.iter_unpack(lz4_block(f.read(list_size), count * entry.size))
+    if version == 18:
+        rows = [
+            (name, off1 | off2 << 32, part, method, on_disk, size)
+            for name, off1, off2, part, method, on_disk, size in raw
+        ]
+    else:
+        rows = [
+            (name, offset, part, method, on_disk, size)
+            for name, offset, on_disk, size, part, method, _, _ in raw
+        ]
     return bool(flags & _SOLID), [
-        (
-            name.split(b"\0", 1)[0].decode("utf-8").replace("\\", "/"),
-            off1 | off2 << 32,
-            part,
-            method,
-            on_disk,
-            size,
-        )
-        for name, off1, off2, part, method, on_disk, size in _ENTRY.iter_unpack(entries)
+        (name.split(b"\0", 1)[0].decode("utf-8").replace("\\", "/"), *rest)
+        for name, *rest in rows
     ]
 
 
