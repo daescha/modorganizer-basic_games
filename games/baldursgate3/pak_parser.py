@@ -76,6 +76,7 @@ class BG3PakParser:
                     if (
                         not force_reparse_metadata
                         and config.has_section(file.name)
+                        and config[file.name].get("signature") == _signature(file)
                         and (
                             "override" in config[file.name].keys()
                             or "Folder" in config[file.name].keys()
@@ -210,6 +211,9 @@ class BG3PakParser:
         to_parse: Callable[[], Path],
     ):
         config[file.name] = {}
+        if file.is_file():
+            config[file.name]["signature"] = _signature(file)
+            self._mod_cache.pop(file, None)
         if condition:
             root = (
                 ElementTree.parse(to_parse())
@@ -259,6 +263,11 @@ class BG3PakParser:
         else:
             config[file.name]["override"] = "True"
         return get_module_short_desc(config, file)
+
+
+def _signature(file: Path) -> str:
+    stat = file.stat()
+    return f"{stat.st_size}:{stat.st_mtime_ns}"
 
 
 def get_module_short_desc(config: configparser.ConfigParser, file: Path) -> str:
