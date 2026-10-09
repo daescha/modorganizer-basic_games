@@ -129,6 +129,7 @@ class DataLooksValidTest(unittest.TestCase):
 
 
 _mod = importlib.import_module("basic_games.games.baldursgate3.bg3_data_checker")
+_utils = importlib.import_module("basic_games.games.baldursgate3.bg3_utils")
 
 
 def _variant_tree() -> Any:
@@ -192,6 +193,27 @@ class PakVariantsTest(unittest.TestCase):
         tree = _variant_tree()
         BG3ModDataChecker(choose_variant=_cancel).fix(tree)
         self.assertEqual(sorted(e.name() for e in tree), ["Option A", "Option B"])
+
+
+def _lsx(*folders: str) -> str:
+    nodes = "".join(_utils.get_node_string(folder=f) for f in folders)
+    return f'<save><node id="Mods"><children>{nodes}</children></node></save>'
+
+
+class ModsettingsEmptiedTest(unittest.TestCase):
+    def test_emptied(self):
+        self.assertTrue(_mod.modsettings_emptied(_lsx("GustavX", "A"), _lsx("GustavX")))
+
+    def test_kept(self):
+        self.assertFalse(
+            _mod.modsettings_emptied(_lsx("GustavX", "A"), _lsx("GustavX", "A"))
+        )
+
+    def test_backup_without_mods(self):
+        self.assertFalse(_mod.modsettings_emptied(_lsx("GustavX"), _lsx()))
+
+    def test_unparsable_current_counts_as_emptied(self):
+        self.assertTrue(_mod.modsettings_emptied(_lsx("A"), ""))
 
 
 if __name__ == "__main__":
