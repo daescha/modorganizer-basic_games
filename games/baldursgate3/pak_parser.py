@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import traceback
+import zlib
 from functools import cached_property
 from pathlib import Path
 from typing import Callable
@@ -19,7 +20,7 @@ from PyQt6.QtCore import (
 
 import mobase
 
-from . import bg3_utils
+from . import bg3_utils, lspk
 
 
 class BG3PakParser:
@@ -100,11 +101,18 @@ class BG3PakParser:
                         str(meta_file)[:-4] if self._utils.extract_full_package else ""
                     )
                     can_continue = True
-                    if self.run_divine(
-                        f'{"extract-package" if self._utils.extract_full_package else "extract-single-file -f meta.lsx"} -d "{meta_file if not self._utils.extract_full_package else out_dir}"',
-                        file,
-                    ).returncode:
-                        can_continue = False
+                    try:
+                        if self._utils.extract_full_package:
+                            raise lspk.UnsupportedPak("full package extraction")
+                        if (meta := lspk.read_meta(file)) is not None:
+                            meta_file.write_bytes(meta)
+                    except (lspk.UnsupportedPak, OSError, zlib.error) as e:
+                        qDebug(f"using Divine for {file.name}: {e}")
+                        if self.run_divine(
+                            f'{"extract-package" if self._utils.extract_full_package else "extract-single-file -f meta.lsx"} -d "{meta_file if not self._utils.extract_full_package else out_dir}"',
+                            file,
+                        ).returncode:
+                            can_continue = False
                     if can_continue and self._utils.extract_full_package:
                         qDebug(f"archive {file} extracted to {out_dir}")
                         if self.run_divine(
