@@ -234,13 +234,21 @@ class BG3PakParser:
                     # 1. it has files in Public/Engine/Timeline/MaterialGroups, or
                     # 2. it has files in Mods/<folder_name>/ other than the meta.lsx file, or
                     # 3. it has files in Public/<folder_name>
-                    result = self.run_divine(
-                        f'list-package --use-regex -x "(/{re.escape(folder_name)}/(?!meta\\.lsx))|(Public/Engine/Timeline/MaterialGroups)"',
-                        file,
+                    pattern = re.compile(
+                        rf"(/{re.escape(folder_name)}/(?!meta\.lsx))|(Public/Engine/Timeline/MaterialGroups)"
                     )
-                    self._mod_cache[file] = (
-                        result.returncode == 0 and result.stdout.strip() != ""
-                    )
+                    try:
+                        self._mod_cache[file] = any(
+                            map(pattern.search, lspk.list_files(file))
+                        )
+                    except (lspk.UnsupportedPak, OSError) as e:
+                        qDebug(f"using Divine to list {file.name}: {e}")
+                        result = self.run_divine(
+                            f'list-package --use-regex -x "{pattern.pattern}"', file
+                        )
+                        self._mod_cache[file] = (
+                            result.returncode == 0 and result.stdout.strip() != ""
+                        )
                 if self._mod_cache[file]:
                     for key in self._types:
                         section[key] = self.get_attr_value(root, key)
