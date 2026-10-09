@@ -14,32 +14,37 @@ class UnsupportedPak(Exception):
 
 def lz4_block(src: bytes, size: int) -> bytes:
     out, i = bytearray(), 0
-    while i < len(src):
-        token = src[i]
-        i += 1
-        length = token >> 4
-        if length == 15:
-            while src[i] == 255:
-                length += 255
-                i += 1
-            length += src[i]
+    try:
+        while i < len(src):
+            token = src[i]
             i += 1
-        out += src[i : i + length]
-        i += length
-        if i >= len(src):
-            break
-        offset = src[i] | src[i + 1] << 8
-        i += 2
-        length = token & 15
-        if length == 15:
-            while src[i] == 255:
-                length += 255
+            length = token >> 4
+            if length == 15:
+                while src[i] == 255:
+                    length += 255
+                    i += 1
+                length += src[i]
                 i += 1
-            length += src[i]
-            i += 1
-        start = len(out) - offset
-        for k in range(length + 4):
-            out.append(out[start + k])
+            out += src[i : i + length]
+            i += length
+            if i >= len(src):
+                break
+            offset = src[i] | src[i + 1] << 8
+            i += 2
+            length = token & 15
+            if length == 15:
+                while src[i] == 255:
+                    length += 255
+                    i += 1
+                length += src[i]
+                i += 1
+            if not 0 < offset <= len(out):
+                raise UnsupportedPak(f"lz4 offset {offset} out of range")
+            start = len(out) - offset
+            for k in range(length + 4):
+                out.append(out[start + k])
+    except IndexError:
+        raise UnsupportedPak("lz4 block truncated") from None
     if len(out) != size:
         raise UnsupportedPak(f"lz4 size mismatch: {len(out)} != {size}")
     return bytes(out)
